@@ -3,8 +3,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
-// 보이스피싱 계좌를 판별하기 위한 클래스
 class VoicePhishingDetector {
 private:
     std::vector<std::string> phishingAccounts;
@@ -12,6 +12,10 @@ private:
 public:
     VoicePhishingDetector(const std::string& filename) {
         std::ifstream database(filename);
+        if (!database.is_open()) {
+            std::cerr << "Error: Could not open file " << filename << std::endl;
+            return;
+        }
         std::string line;
 
         while (std::getline(database, line)) {
@@ -25,7 +29,7 @@ public:
             iss >> balance;
 
             if (accountNumber[0] == '!') {
-                phishingAccounts.push_back(accountNumber.substr(1)); // '!' 제외한 계좌번호 추가
+                phishingAccounts.push_back(accountNumber.substr(1));
             }
         }
 
@@ -42,30 +46,56 @@ public:
     }
 };
 
-// 카드 리더 클래스
 class CardReader {
 private:
+    std::unordered_map<std::string, std::pair<std::string, int>> cardDatabase;
     std::string cardNumber;
     std::string userName;
     int balance;
 
 public:
-    CardReader(const std::string& cardNumber, const std::string& userName)
-        : cardNumber(cardNumber), userName(userName), balance(10000) {}
+    CardReader(const std::string& filename) {
+        std::ifstream database(filename);
+        if (!database.is_open()) {
+            std::cerr << "Error: Could not open file " << filename << std::endl;
+            return;
+        }
+        std::string line;
 
-    // 카드의 유효성 검사
-    bool verifyCard(const std::string& enteredCardNumber) const {
-        return enteredCardNumber == cardNumber;
+        while (std::getline(database, line)) {
+            std::istringstream iss(line);
+            std::string cardNumber, name, accountNumber;
+            int balance;
+
+            std::getline(iss, cardNumber, ',');
+            std::getline(iss, name, ',');
+            std::getline(iss, accountNumber, ',');
+            iss >> balance;
+
+            cardDatabase[cardNumber] = { name, balance };
+        }
+
+        database.close();
     }
 
-    // 현재 잔액 반환
+    bool verifyCard(const std::string& enteredCardNumber) {
+        auto it = cardDatabase.find(enteredCardNumber);
+        if (it != cardDatabase.end()) {
+            cardNumber = enteredCardNumber;
+            userName = it->second.first;
+            balance = it->second.second;
+            return true;
+        }
+        return false;
+    }
+
     int getBalance() const {
         return balance;
     }
 
-    // 잔액 설정
     void setBalance(int newBalance) {
         balance = newBalance;
+        cardDatabase[cardNumber].second = newBalance;
     }
 
     std::string getUserName() const {
@@ -74,26 +104,27 @@ public:
 
     void deposit(int amount) {
         balance += amount;
+        cardDatabase[cardNumber].second = balance;
     }
 
     bool withdraw(int amount) {
         if (amount > balance) {
-            return false; // 잔액 부족
+            return false;
         }
         balance -= amount;
-        return true; // 정상 처리
+        cardDatabase[cardNumber].second = balance;
+        return true;
     }
 };
 
-// ATM 클래스: ATM의 주요 기능을 담당
 class ATM {
 private:
     CardReader cardReader;
     VoicePhishingDetector phishingDetector;
 
 public:
-    ATM(const std::string& cardNumber, const std::string& userName, const std::string& databaseFilename)
-        : cardReader(cardNumber, userName), phishingDetector(databaseFilename) {}
+    ATM(const std::string& databaseFilename)
+        : cardReader(databaseFilename), phishingDetector(databaseFilename) {}
 
     void displayMenu() {
         std::cout << "=== ATM 메뉴 ===" << std::endl;
@@ -110,12 +141,10 @@ public:
             std::string cardNumber;
             bool cardVerified = false;
 
-            // 카드번호 입력
             while (!cardVerified) {
                 std::cout << "카드를 넣어주세요 (프로그램 종료: 'q' 입력): ";
                 std::cin >> cardNumber;
 
-                // 사용자가 'q'를 입력하면 프로그램 종료
                 if (cardNumber == "q") {
                     std::cout << "프로그램을 종료합니다." << std::endl;
                     return;
@@ -128,7 +157,6 @@ public:
                 }
             }
 
-            // 메뉴 선택
             while (true) {
                 int choice;
                 displayMenu();
@@ -136,22 +164,22 @@ public:
                 std::cin >> choice;
 
                 switch (choice) {
-                case 1: // 현금 인출
+                case 1:
                     withdrawCash();
                     break;
-                case 2: // 현금 입금
+                case 2:
                     depositCash();
                     break;
-                case 3: // 송금
+                case 3:
                     transfer();
                     break;
-                case 4: // 잔액 조회
+                case 4:
                     checkBalance();
                     break;
-                case 5: // 영수증 인쇄
+                case 5:
                     printReceipt();
                     break;
-                case 6: // 카드번호 입력으로 돌아감
+                case 6:
                     std::cout << "카드번호 입력으로 돌아갑니다." << std::endl;
                     break;
                 default:
@@ -159,24 +187,30 @@ public:
                 }
 
                 if (choice == 6) {
-                    break; // 카드번호 입력으로 돌아감
+                    break;
                 }
             }
         }
     }
 
-
     void withdrawCash() {
         int amount;
         std::cout << "인출할 금액을 입력하세요: ";
         std::cin >> amount;
-        cardReader.withdraw(amount);
+        if (cardReader.withdraw(amount)) {
+            std::cout << amount << " 원이 인출되었습니다." << std::endl;
+        }
+        else {
+            std::cout << "잔액이 부족합니다." << std::endl;
+        }
     }
+
     void depositCash() {
         int amount;
         std::cout << "입금할 금액을 입력하세요: ";
         std::cin >> amount;
         cardReader.deposit(amount);
+        std::cout << amount << " 원이 입금되었습니다." << std::endl;
     }
 
     void transfer() {
@@ -203,15 +237,11 @@ public:
             std::cout << "잔액이 부족합니다." << std::endl;
         }
         else {
-            int currentBalance = cardReader.getBalance();
-            currentBalance -= amount;
-            cardReader.setBalance(currentBalance);
-
+            cardReader.withdraw(amount);
             std::cout << amount << " 원을 " << toAccount << " 계좌로 송금했습니다." << std::endl;
             std::cout << "현재 잔액: " << cardReader.getBalance() << " 원" << std::endl;
         }
     }
-
 
     void checkBalance() {
         std::string userName = cardReader.getUserName();
@@ -228,15 +258,12 @@ public:
         std::cout << "잔액: " << currentBalance << " 원" << std::endl;
     }
 };
-int main() {
-    std::string cardNumber = "1234-1234-1234-1234";
-    std::string userName = "Alice"; // 예를 들어 사용자 이름을 직접 설정
 
+int main() {
     std::string databaseFilename = "database.txt";
 
-    ATM atm(cardNumber, userName, databaseFilename);
+    ATM atm(databaseFilename);
     atm.run();
 
     return 0;
 }
-
